@@ -269,12 +269,6 @@
     </include>
     <include>
       <static>false</static>
-      <name>demo_orange_can</name>
-      <pose>1.55 2.32 0.46375 0 0 0</pose>
-      <uri>model://hsr_orange</uri>
-    </include>
-    <include>
-      <static>false</static>
       <name>demo_apple</name>
       <pose>2.02 2.32 0.447 0 0 0</pose>
       <uri>model://apple</uri>
@@ -302,6 +296,38 @@
       <uri>model://spray_bottle</uri>
       <pose>1.78 2.32 0.402 0 0 0</pose>
       <static>false</static>
+    </include>
+    <!--
+      Two cereal boxes placed to occlude the Pringles can, 0.06 x 0.16 x 0.24 m
+      and as tall as it. They were first put either side of the can at +/-0.13 m,
+      which was wrong twice over: the fusion cube is 0.3 m centred on the target,
+      so 5 of each box's 6 cm sat *inside* the volume being fused, and 0.062 m
+      was room for the gripper's opening but not for the hand and wrist to reach
+      in, so every IK solution came back in collision.
+
+      The table top is 0.68 x 1.13 m at (1.56, 2.58) turned 90 degrees, so it
+      runs x 0.995-2.125, y 2.24-2.92. The can at x 1.1 is 10 cm from the left
+      edge, and a symmetric pair clear of the cube would put the left box on the
+      floor. So they go where the table has room: one to the right, one behind.
+      Both clear the cube (x 0.95-1.25, y 2.17-2.47) and leave the front-left
+      quadrant open, which is the approach the policy now has to find.
+
+      The scene graph is deliberately untouched: it still places the can where
+      the can still is, so the mission navigates there as before and only the
+      view is obstructed, which is the point. These two boxes are unmapped
+      clutter, as far as everything upstream of the camera is concerned.
+    -->
+    <include>
+      <static>false</static>
+      <name>demo_occluder_behind</name>
+      <pose>1.10 2.56 0.522 0 0 0</pose>
+      <uri>model://cereal_box</uri>
+    </include>
+    <include>
+      <static>false</static>
+      <name>demo_occluder_right</name>
+      <pose>1.32 2.34 0.522 0 0 0</pose>
+      <uri>model://cereal_box</uri>
     </include>
   </world>
 </sdf>

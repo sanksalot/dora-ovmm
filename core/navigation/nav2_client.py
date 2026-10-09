@@ -58,6 +58,10 @@ class Navigator(Node):
         # per aim lost 3 of 8 head goals on the robot, one kept client 0 of 8.
         self.head = ActionClient(self, FollowJointTrajectory,
                                  "/head_trajectory_controller/follow_joint_trajectory")
+        # Same fault, same cure: explore's torso lift opened a fresh client per view
+        # and lost its goal on the robot (2026-09-24 03:24, "goal acceptance timed out").
+        self.arm = ActionClient(self, FollowJointTrajectory,
+                                "/arm_trajectory_controller/follow_joint_trajectory")
         self.tf_buffer = Buffer()
         self.listener = TransformListener(self.tf_buffer, self)
 

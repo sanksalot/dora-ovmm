@@ -1,0 +1,53 @@
+{
+  "path_length_m": 10.6,
+  "map_cells": {
+    "free": 9787,
+    "occupied": 1415,
+    "unknown": 1424
+  },
+  "laser_height_alignment": {
+    "points": 8354,
+    "median_m": 0.05,
+    "within_5cm": 0.72,
+    "within_10cm": 0.84,
+    "within_20cm": 0.928
+  },
+  "frame_to_model": [
+    {
+      "keyframe": 0,
+      "pixels": 6998,
+      "median_mm": 22.4,
+      "within_5cm": 0.779
+    },
+    {
+      "keyframe": 65,
+      "pixels": 16095,
+      "median_mm": 19.1,
+      "within_5cm": 0.994
+    },
+    {
+      "keyframe": 130,
+      "pixels": 15495,
+      "median_mm": 13.8,
+      "within_5cm": 0.989
+    },
+    {
+      "keyframe": 195,
+      "pixels": 16009,
+      "median_mm": 21.1,
+      "within_5cm": 0.837
+    },
+    {
+      "keyframe": 260,
+      "pixels": 16638,
+      "median_mm": 14.2,
+      "within_5cm": 0.981
+    },
+    {
+      "keyframe": 325,
+      "pixels": 6258,
+      "median_mm": 12.9,
+      "within_5cm": 0.949
+    }
+  ]
+}

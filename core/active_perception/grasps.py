@@ -28,9 +28,18 @@ def graspgenx_grasps(points):
     return poses, scores
 
 
-def ik_reachable(navigator, obstacles="--costmap", top_k=5, timeout=30.0):
-    """Build a check for base and arm solutions for the first top_k map-frame grasps."""
-    from core.navigation import base_placement
+def ik_reachable(navigator, obstacles="--costmap", top_k=5, timeout=30.0, blockers=()):
+    """Build a check for base and arm solutions for the first top_k map-frame grasps.
+
+    `blockers` are the scene graph's (centre, dimensions, yaw) footprints, as
+    graspable.reposition keeps the base out of them. The costmap alone is not
+    enough: the kitchen low table's top is above the laser and its footprint is
+    free in the static map, so in run 20260924-020743 every base the solver
+    offered for the kept grasp stood inside the table's standoff, and park
+    (which does apply it) found "8 returned base poses, 0 clear of furniture".
+    A grasp is reachable when at least one of its bases is clear of them.
+    """
+    from core.navigation import base_placement, graspable, standoff
 
     def reachable(poses):
         poses = np.asarray(poses, dtype=float)
@@ -40,9 +49,13 @@ def ik_reachable(navigator, obstacles="--costmap", top_k=5, timeout=30.0):
         # Transform map poses into odom, the frame expected by the IK service.
         results = base_placement.solve(odom_from_map @ asked, obstacles=obstacles,
                                        goal_frame="odom", timeout=timeout)
+        map_from_odom = navigator.frame_transform("map", "odom")
         # Mark unchecked grasps as unreachable in the returned mask.
         mask = np.zeros(len(poses), dtype=bool)
-        mask[:len(asked)] = [len(bases) > 0 for bases, _ in results]
+        mask[:len(asked)] = [
+            any(not standoff.blocks(graspable._planar(map_from_odom, base), blockers) for base in bases)
+            for bases, _ in results
+        ]
         return mask
 
     return reachable

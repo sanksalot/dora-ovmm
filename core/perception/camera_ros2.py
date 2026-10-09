@@ -23,6 +23,13 @@ IMAGE_PREFIX = os.environ.get("HSR_IMAGE_PREFIX", "/remote" if REAL_ROBOT else "
 RGB_TOPIC = IMAGE_PREFIX + "/head_rgbd_sensor/rgb/image_rect_color"
 DEPTH_TOPIC = IMAGE_PREFIX + "/head_rgbd_sensor/depth_registered/image_rect_raw"
 CAMERA_INFO_TOPIC = "/head_rgbd_sensor/rgb/camera_info"
+# Reliability belongs to the topics, not to the clock: vision-transport
+# republishes best-effort, Gazebo's bridge publishes reliable. Deciding it from
+# use_sim_time instead let a real-robot run started without --real ask /remote
+# for RELIABLE, which it never offers; DDS matched nothing and the capture
+# blocked to its timeout behind one QoS warning.
+IMAGE_QOS = (qos_profile_sensor_data if REAL_ROBOT
+             else QoSProfile(depth=3, reliability=ReliabilityPolicy.RELIABLE))
 BASE_FRAME = "odom"
 # Allow extra time to discover real-robot image publishers and transforms.
 CAPTURE_TIMEOUT = 45. if REAL_ROBOT else 15.
@@ -117,14 +124,11 @@ def grab_rgbd(target_frame=BASE_FRAME, timeout=CAPTURE_TIMEOUT, use_sim_time=USE
         listener = TransformListener(buffer, node)
         frames = {}
         capture_start = node.get_clock().now().nanoseconds
-        # Match reliable simulation images or best-effort vision-transport images.
-        image_qos = (QoSProfile(depth=3, reliability=ReliabilityPolicy.RELIABLE)
-                     if use_sim_time else qos_profile_sensor_data)
         rgb_sub = message_filters.Subscriber(
-            node, Image, RGB_TOPIC, qos_profile=image_qos
+            node, Image, RGB_TOPIC, qos_profile=IMAGE_QOS
         )
         depth_sub = message_filters.Subscriber(
-            node, Image, DEPTH_TOPIC, qos_profile=image_qos
+            node, Image, DEPTH_TOPIC, qos_profile=IMAGE_QOS
         )
         # Pair RGB and depth images captured within 50 milliseconds.
         sync = message_filters.ApproximateTimeSynchronizer(

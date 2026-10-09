@@ -9,6 +9,7 @@ Grouped by what each script talks to: the bag, the recording, or the robot.
 | [`dataprep/`](dataprep/) | the bag | bag → Nav2 map → keyframes → Boxer boxes → scene graph. Steps 1–8 and their checks: [dataprep/realrobot_dataprep.md](dataprep/realrobot_dataprep.md) |
 | [`offline/`](offline/) | the recording | the finished map, graph and keyframes, no robot needed: path overlays, footprint checks, next-best-view replay |
 | [`live/`](live/) | the real HSR | seed its localizer so Nav2 can drive; drive to a furniture piece; check what a grasp needs before anything moves |
+| [`visualizations/`](visualizations/) | the real HSR | one RGB-D frame, SAM3's mask and GraspGenX's best grasps drawn on the frame and on the cloud, each a file for slides: `rgbd_frame_capture.py`. `view_grasps.py` turns the cloud and hands round in Open3D (on a machine with a display); the run's `graspgenx/` folder opens in GraspGenX's own viewer via `docker/graspgenx/run_demo.sh`. `rgbd_recorder.py` records the RGB and depth streams to `rgb.mp4` and `depth.mp4`. `scene_graph_figure.py` draws the scene graph as stacked map, object, furniture and room layers; `scene_graph_3d.py` draws it as boxes in the fused cloud, or opens it in Open3D with `--view` |
 
 Navigation on the robot -- the run sequence, every parameter changed and why,
 and each failure diagnosed so far: **[realrobot_nav_setup.md](realrobot_nav_setup.md)**.

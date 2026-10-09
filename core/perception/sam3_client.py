@@ -31,6 +31,32 @@ def run_folder():
     return DETECTIONS / run
 
 
+BEST, OTHER = (80, 255, 80), (0, 200, 255)  # BGR: the chosen instance, the rest
+TINT = 0.6  # how much of the mask's colour shows through
+
+
+def tag(picture, text, at, colour, scale=0.55):
+    """A filled label at pixel `at` (its bottom-left), in `colour` with dark text, kept on
+    the image. For a mask or a grasp, so its name and score read on any background."""
+    (width, height), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, 1)
+    x = int(np.clip(at[0], 0, picture.shape[1] - width - 8))
+    y = int(np.clip(at[1], height + 8, picture.shape[0]))
+    cv2.rectangle(picture, (x, y - height - 8), (x + width + 8, y), colour, -1)
+    cv2.putText(picture, text, (x + 4, y - 4), cv2.FONT_HERSHEY_SIMPLEX, scale, (20, 20, 20), 1, cv2.LINE_AA)
+
+
+def draw_mask(picture, mask, colour, label=None, thick=True):
+    """Tint the mask in `colour`, outline it with a dark halo so it reads on any
+    background, and tag it above its top with `label`."""
+    picture[mask] = ((1 - TINT) * picture[mask] + TINT * np.array(colour)).astype(np.uint8)
+    outline, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cv2.drawContours(picture, outline, -1, (20, 20, 20), 4 if thick else 3, cv2.LINE_AA)
+    cv2.drawContours(picture, outline, -1, colour, 2 if thick else 1, cv2.LINE_AA)
+    if label and mask.any():
+        x, y, _, _ = cv2.boundingRect(mask.astype(np.uint8))
+        tag(picture, label, (x, y - 4), colour)
+
+
 def save_detection(image_bgr, prompt, masks, boxes, scores):
     """The frame with every mask on it, the best one brightest, and a row in index.jsonl.
 
@@ -44,14 +70,10 @@ def save_detection(image_bgr, prompt, masks, boxes, scores):
         stage = os.environ.get("MISSION_STAGE", "manual")
         best = int(np.argmax(scores)) if len(scores) else None
         picture = image_bgr.copy()
-        for index in range(len(scores)):
-            colour = (60, 220, 60) if index == best else (0, 200, 255)
-            mask = masks[index]
-            picture[mask] = (0.45 * picture[mask] + 0.55 * np.array(colour)).astype(np.uint8)
-            outline, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            cv2.drawContours(picture, outline, -1, colour, 2 if index == best else 1)
-            x, y = int(boxes[index][0]), max(int(boxes[index][1]) - 6, 12)
-            cv2.putText(picture, f"{scores[index]:.2f}", (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 2)
+        for index in sorted(range(len(scores)), key=lambda i: i == best):  # the best drawn last, on top
+            draw_mask(picture, masks[index], BEST if index == best else OTHER,
+                      f"{prompt}  {scores[index]:.2f}" if index == best else f"{scores[index]:.2f}",
+                      thick=index == best)
         found = f"{scores[best]:.2f}" if best is not None else "nothing found"
         caption = f'"{prompt}"  {found}  |  {stage}  |  {folder.name}'
         bar = np.full((26, picture.shape[1], 3), 30, dtype=np.uint8)

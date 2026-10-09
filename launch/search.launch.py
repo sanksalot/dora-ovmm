@@ -12,6 +12,7 @@ from launch.actions import (
     LogInfo,
     OpaqueFunction,
     RegisterEventHandler,
+    SetEnvironmentVariable,
 )
 from launch.conditions import IfCondition, UnlessCondition
 from launch.event_handlers import OnProcessExit, OnShutdown
@@ -71,6 +72,12 @@ def generate_launch_description():
             description="target is a request ('bring me something to drink'); DeepSeek names the object.",
         ),
         DeclareLaunchArgument(
+            "furniture",
+            default_value="",
+            description="Search this one furniture piece only (node id, or a unique name or label), "
+                        "as search_real.launch.py: no remembered places, no DeepSeek.",
+        ),
+        DeclareLaunchArgument(
             "mode",
             default_value="auto",
             choices=["auto", "pickup", "grasp"],
@@ -93,6 +100,12 @@ def generate_launch_description():
             default_value="false",
             choices=["true", "false"],
             description="Open the Rerun viewer and stream the Explore step live (needs a display).",
+        ),
+        DeclareLaunchArgument(
+            "nbv_rviz",
+            default_value="false",
+            choices=["true", "false"],
+            description="Publish the Explore step as markers for config/rviz/nbv.rviz.",
         ),
         DeclareLaunchArgument(
             "shutdown_when_done",
@@ -161,6 +174,8 @@ def generate_launch_description():
         Arg("startup_timeout"),
         "--grasp",
         Arg("grasp"),
+        "--furniture",
+        Arg("furniture"),
     ]
     # No mission with web:=true: queries come from the web dashboard instead.
     tree = ExecuteProcess(
@@ -178,6 +193,8 @@ def generate_launch_description():
             Arg("active_perception"),
             "--rerun",
             Arg("rerun"),
+            "--rviz",
+            Arg("nbv_rviz"),
             "--natural-language",
             Arg("natural_language"),
         ],
@@ -185,6 +202,20 @@ def generate_launch_description():
         output="both",
         cwd=str(ROOT),
         condition=UnlessCondition(Arg("web")),
+    )
+
+    # Started here rather than by hand: RViz reads TF stamped from /clock, so on
+    # the wall clock every transform looks ancient and the robot model never
+    # moves. The launch knows this is the simulator, so it can just say so.
+    nbv_rviz = ExecuteProcess(
+        cmd=[
+            "ros2", "run", "rviz2", "rviz2",
+            "-d", str(ROOT / "config/rviz/nbv.rviz"),
+            "--ros-args", "-p", "use_sim_time:=true",
+        ],
+        name="nbv_rviz",
+        output="log",
+        condition=IfCondition(Arg("nbv_rviz")),
     )
 
     def finished(event, context):
@@ -215,11 +246,20 @@ def generate_launch_description():
     return LaunchDescription(
         arguments
         + [
+            # This file is the simulator. .devcontainer/runtime.env exports
+            # HSR_REAL_ROBOT=1 into every terminal, and mission_tree reads it to
+            # pick its clock: inherited here it gave the navigator the wall
+            # clock while every TF stamp came from /clock, so "fresh
+            # map-to-base localization" compared 1.8e9 s against 190 s, never
+            # passed, and the run died on the startup deadline. Clear it, so a
+            # sim launch is a sim launch whatever the shell was set up for.
+            SetEnvironmentVariable("HSR_REAL_ROBOT", ""),
             RegisterEventHandler(OnProcessExit(target_action=tree, on_exit=finished)),
             RegisterEventHandler(
                 OnShutdown(on_shutdown=[OpaqueFunction(function=stop_gazebo)])
             ),
             *processes,
+            nbv_rviz,
             tree,
         ]
     )

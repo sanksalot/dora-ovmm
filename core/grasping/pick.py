@@ -78,8 +78,38 @@ OPEN_HAND = 1.1  # hand_motor_joint; wider breaks the distal finger limit
 GRASP_LIFT_MAX = 0.65  # reserve travel for approach and the verification lift
 # Nm, negative closes. The lowest torque tried on a hand-held can (effort_test,
 # 2026-09-19) and judged 'held', springs 0.41 / 0.49 above free air; -0.05 read
-# the same. Was -0.3, never run on hardware.
-CLOSE_EFFORT = -0.02
+# the same. Was -0.3, never run on hardware. At -0.02 on the robot (2026-09-22,
+# office table) the fingers did not wrap the can and it wobbled through the test
+# lift, nearly out of the hand. -0.15, a little under half the allowed -0.3
+# (about 2 N at the pads), held the can firmly through the lift on the next run
+# the same night, no dent. HSR_GRASP_EFFORT_NM overrides.
+CLOSE_EFFORT = -0.15
+# The share of a mask's pixels that must carry depth for the view to be a
+# measurement of the object. The camera returns nothing under ~0.5 m: on
+# 2026-09-19 masks at 0.53 m and beyond had depth on 78-97% of their pixels, at
+# 0.45-0.48 m on 0-29%; and after the lift on 2026-09-22 the can in the hand had
+# 2%, 198 points of background at 2.9 m that then failed the lift check with the
+# can held. Own choice, under every working view seen so far (30% and up).
+MIN_DEPTH_COVERAGE = 0.10
+# A lifted object is checked by the camera only when it can see the whole of it.
+# Held, the can sits 0.49-0.50 m from the head camera, the near limit: on
+# 2026-09-22 (23:58) the check view had depth on 15% of the mask, a 5 cm slice of
+# the side between the hand and that limit, and its top read as the can's top,
+# so a can in the hand was judged not to have risen. Views that measured the
+# whole can ran at 0.51 m and beyond with 78% or more; own thresholds between.
+LIFT_CHECK_RANGE = 0.50    # m, median depth on the mask
+LIFT_CHECK_COVERAGE = 0.30
+# How far a lifted can may sit from where the hand's own motion says it should be
+# and still be the same can: sideways as the pads centre it (9.6 mm on 2026-09-19,
+# 16.6 mm on 2026-09-23), upward as it rides up in the closing pads (10 mm on
+# 2026-09-23). A can 25 mm off is not the one lifted (test). Own choices.
+LIFT_SETTLE = 0.02  # m, sideways
+LIFT_RIDE = 0.02    # m, above the hand's rise
+# Head tilts tried, top to bottom, when the first view of a pick shows no target:
+# the pick alone leaves the head where it was (mission_tree --nav false), and on
+# 2026-09-23 (01:21) that was level, with the box on the table right below the
+# frame. The head tilts down to -1.57; these cover a tabletop 0.4-1 m ahead.
+SEARCH_TILTS = [-0.35, -0.6, -0.85]
 # Pad gap left around the object by the fast pre-close: 15 mm a side for the
 # width and placement error of the grasp. Own choice, not calibrated. The press
 # test of 2026-09-19 met a ~75 mm can at command 0.58-0.60 (profile gap 74-76 mm),
@@ -93,13 +123,21 @@ PRECLOSE_MARGIN = 0.03  # m
 FINE_MARGIN = 0.012  # m
 # Use fingertip spacing to detect an empty grasp; motor angle alone is unreliable.
 EMPTY_GAP = 0.01
+# A motor that stops following its command is on the object, springs or not. On
+# 2026-09-22 the fingers met the can and the reading stayed at 0.627 while the
+# command went on to 0.617; the springs sat flat, so the spring test never fired
+# and the closure ran on until a step to the blocked joint timed out. In free air
+# the reading trails the command by the mean spring (free_air_reading), and while
+# moving it lags that by up to 0.05 rad over a 0.02 step. Beyond this margin
+# something is holding the fingers open. Own choice, from that run's samples.
+STALL_LAG = 0.08
 # The whole_body group's active joints, for joint-space goals.
 WHOLE_BODY_JOINTS = ["odom_x", "odom_y", "odom_t", "arm_lift_joint", "arm_flex_joint",
                      "arm_roll_joint", "wrist_flex_joint", "wrist_roll_joint"]
 HEAD_LINKS = ["head_rgbd_sensor_link", "head_tilt_link"]
 BASE_SLACK = {
-    "odom_x": 0.3,
-    "odom_y": 0.3,
+    "odom_x": 0.25,
+    "odom_y": 0.25,
     "odom_t": 0.2,
 }  # m, m, rad around parked base
 JOINT_STATES = "/whole_body_moveit/joint_states"  # includes the base's odom joints
@@ -279,7 +317,7 @@ def rectangular_candidates(rect, bottom, camera_position):
                 closing = -np.cross([0., 0., 1.], approach)
                 depth = float(np.ptp(corners@approach[:2]))
                 # Place contact slightly inside the observed front face, bounded by object size.
-                penetration = min(.025, .35*width, .45*depth)
+                penetration = front_penetration(width, depth)
                 contact = np.r_[centre, (bottom+top)/2]
                 contact -= approach*(depth/2-penetration)
             orientation = np.column_stack([closing, np.cross(approach, closing), approach])
@@ -296,6 +334,58 @@ def rectangular_candidates(rect, bottom, camera_position):
         raise RuntimeError(f'No aperture-compatible {shape} {mode} grasp; '
                            f'top z={top:.3f} m, horizontal width={horizontal_width:.3f} m')
     return poses, widths, f'{shape} {mode}'
+
+
+def flat_face_at_grasp_height(points, half=.03):
+    """The points within `half` of the object's mid-height and that slab's normal, when
+    the slab is one vertical plane; otherwise None."""
+    bottom, top = np.quantile(points[:, 2], [.01, .99])
+    slab = points[np.abs(points[:, 2]-(bottom+top)/2) < half]
+    if len(slab) < 100:
+        return None
+    singular, axes = np.linalg.svd(slab-slab.mean(0), full_matrices=False)[1:]
+    if singular[-1]/np.sqrt(len(slab)) >= .003 or abs(axes[-1][2]) > .35:
+        return None
+    return slab, axes[-1]
+
+
+# How far past an object's front surface the pads close, for a front grasp: half the
+# closing width, at most FRONT_REACH, and never past the middle of a known depth.
+# Was a third of the width and 25 mm at most; on the box of 2026-09-23 (01:30) that
+# held, but at the box's front edge. Own choice, 20 mm on a 40 mm box.
+FRONT_REACH = 0.035
+
+
+def front_penetration(width, depth=None):
+    reach = min(FRONT_REACH, .5*width)
+    return reach if depth is None else min(reach, .45*depth)
+
+
+def front_face_candidates(points, normal, camera_position):
+    """Front grasps on one vertical face seen square on: what a slim box shows with its
+    narrow side to the robot (2026-09-23 00:49, cloud 26 x 42 x 147 mm, refused as a
+    flat surface). The face's width and height are measured; its depth is not, and a
+    front grasp needs none beyond the pads' reach. rectangular_candidates' front
+    mode, on a face instead of a resolved top; own extension."""
+    approach = np.r_[normal[:2], 0.]
+    approach /= np.linalg.norm(approach)
+    if approach @ (points.mean(0)-np.asarray(camera_position)) < 0:
+        approach = -approach  # into the face, away from the camera
+    closing = -np.cross([0., 0., 1.], approach)
+    across = np.quantile(points@closing, [.01, .99])
+    bottom, top = np.quantile(points[:, 2], [.01, .99])
+    width, height = float(across[1]-across[0]), top-bottom
+    if height < .015:
+        raise RuntimeError('Only a flat surface is visible; object height is unresolved')
+    pad_for_width(width)
+    centre = np.r_[(points@approach).mean()*approach[:2] + across.mean()*closing[:2], (bottom+top)/2]
+    contact = centre + approach*front_penetration(width)
+    orientation = np.column_stack([closing, np.cross(approach, closing), approach])
+    flipped = orientation @ np.diag([-1., -1., 1.])
+    raised = contact + np.array([0., 0., min(.04, .2*height)])
+    poses = [calibrated_palm_pose(rotation, point, width)
+             for rotation, point in [(orientation, contact), (flipped, contact), (orientation, raised), (flipped, raised)]]
+    return poses, [width]*len(poses), 'front face'
 
 
 def contact_candidates(points, palms, camera_position):
@@ -370,9 +460,21 @@ def contact_candidates(points, palms, camera_position):
             for roll in [np.eye(3), np.diag([-1.,-1.,1.])]:
                 results.append(calibrated_palm_pose(orientation@roll, centre, width)@rotation)
                 widths.append(width)
-    else:
-        if np.linalg.svd(points-points.mean(0),compute_uv=False)[-1]/np.sqrt(len(points)) < .003:
+    elif np.linalg.svd(points-points.mean(0),compute_uv=False)[-1]/np.sqrt(len(points)) < .003:
+        normal = np.linalg.svd(points-points.mean(0), full_matrices=False)[2][-1]
+        if abs(normal[2]) > .35:
             raise RuntimeError('A single flat surface does not constrain a grasp; another view is needed')
+        poses, widths, kind = front_face_candidates(points, normal, camera_position)
+        results = [pose@rotation for pose in poses]
+    elif (face := flat_face_at_grasp_height(points)) is not None:
+        # A box seen narrow side on with its top in view (2026-09-23 01:25): the cloud is
+        # not flat, but the slice where the pads close is one vertical face. Grasp it
+        # square on. GraspGenX's proposal ran 19 deg off the face there, and a pad met
+        # the front corner and pushed the box away instead of closing on its side.
+        slab, normal = face
+        poses, widths, kind = front_face_candidates(slab, normal, camera_position)
+        results = [pose@rotation for pose in poses]
+    else:
         for pose in canonical:
             approach = pose[:3, 2]
             toward = points.mean(0)-camera_position
@@ -392,7 +494,11 @@ def contact_candidates(points, palms, camera_position):
             # Require resolved depth as well as width. Do not invent a back face.
             if hi[2]-lo[2] < .01:
                 continue
-            contact = np.array([(lo[0]+hi[0])/2,pad[1],(lo[2]+hi[2])/2])
+            # Pads at least front_penetration in, as the box branches do: the middle of
+            # the visible depth is 7 mm behind a face seen square on (box, 2026-09-23
+            # 01:05), and fingers there close in front of the object.
+            depth = max((lo[2]+hi[2])/2, lo[2]+front_penetration(width))
+            contact = np.array([(lo[0]+hi[0])/2,pad[1],depth])
             corrected = calibrated_palm_pose(pose[:3,:3],pose[:3,3]+pose[:3,:3]@contact,width)
             if np.linalg.norm(corrected[:3,3]-pose[:3,3]) > .06:
                 continue
@@ -414,12 +520,17 @@ def verify_object_lift(before, after, expected):
         centre0, radius0, _, top0 = first
         centre1, radius1, _, top1 = second
         rise = top1-top0
-        # Undo the expected lift and compare the remaining surface with the original cloud.
-        distances = cKDTree(before).query(after-expected)[0]
+        # Undo the can's own fitted motion, not the hand's, and compare the remaining
+        # surface with the original cloud: the can settles in the closing pads, 15 mm
+        # sideways and 10 mm further up than the hand on 2026-09-23 (kitchen, 00:14),
+        # with only its top in view. Further than LIFT_SETTLE sideways is another
+        # object; LIFT_RIDE up is as far as the pads carry it.
+        motion = np.r_[centre1-centre0, rise]
+        distances = cKDTree(before).query(after-motion)[0]
         coverage = float(np.mean(distances < .01))
         if (abs(radius1-radius0) <= .003 and
-                np.linalg.norm(centre1-centre0-expected[:2]) <= .008 and
-                rise >= .6*expected[2] and abs(rise-expected[2]) <= .01 and
+                np.linalg.norm(centre1-centre0-expected[:2]) <= LIFT_SETTLE and
+                rise >= .6*expected[2] and rise-expected[2] <= LIFT_RIDE and
                 coverage >= .7):
             return {'rise_m': float(rise), 'surface_coverage': coverage}
     # Keep the original sphere radius when fitting motion from the visible surface.
@@ -846,6 +957,14 @@ def wait_for_hold(read_contact, clock, seconds=5., timeout=90.):
     raise RuntimeError('Timed out waiting for sustained grasp contact')
 
 
+def free_air_reading(command):
+    """What the motor reads in free air at this command: the command less the mean
+    spring deflection, which is how the joint reports (spring_rise's note)."""
+    rows = json.loads((Path(__file__).parent / 'free_air_springs.json').read_text())[::-1]
+    at = [r['command'] for r in rows]
+    return command - np.interp(command, at, [(r['left'] + r['right']) / 2 for r in rows])
+
+
 def spring_rise(q, command=None):
     springs = [q[f'hand_{s}_spring_proximal_joint'] for s in 'lr']
     if USE_SIM_TIME:
@@ -927,6 +1046,17 @@ def close(node, threshold=.06, motor=None, fine_below=0.):
         if seen_contact and min(left, right) < .02:
             raise RuntimeError('Object contact lost during closure; refusing further squeezing')
         seen_contact |= min(left, right) > .06
+        if not USE_SIM_TIME and q['hand_motor_joint'] - free_air_reading(motor) > STALL_LAG:
+            # The joint is held open by the object. Confirm it is not a slow controller.
+            for _ in range(3):
+                time.sleep(.2)
+                again = joint_positions(node)['hand_motor_joint']
+                if abs(again - q['hand_motor_joint']) > .01 or again - free_air_reading(motor) <= STALL_LAG:
+                    break
+            else:
+                print(f"[CONTACT] motor stopped at {q['hand_motor_joint']:.3f} with the command at {motor:.3f}: "
+                      f"on the object, springs {left:.3f}, {right:.3f}", flush=True)
+                return {'left': left, 'right': right, 'motor': q['hand_motor_joint']}
         if contact_state(left, right, threshold):
             # Confirm contact persists across several feedback samples before holding position.
             for _ in range(3):
@@ -1064,12 +1194,18 @@ def save_view(prompt, rgb, depth, k, odom_from_camera, mask, score, **extra):
 
 
 def observe_lifted(prompt):
-    """observe(), or None when the lifted object is inside the camera's blind range."""
+    """observe(), or None when the lifted object is inside the camera's blind range or
+    only a fragment of it is measured there (LIFT_CHECK_RANGE, LIFT_CHECK_COVERAGE)."""
     try:
-        return observe(prompt)
+        view = observe(prompt)
     except (DepthTooSparse, pointcloud.InvalidTargetDepth) as error:
         print(f'[LIFT] no camera check: {error}', flush=True)
         return None
+    if view['median_range'] < LIFT_CHECK_RANGE or view['coverage'] < LIFT_CHECK_COVERAGE:
+        print(f"[LIFT] no camera check: at {view['median_range']:.2f} m with depth on "
+              f"{view['coverage']:.0%} of the mask, only a fragment of the {prompt} is measured", flush=True)
+        return None
+    return view
 
 
 def observe(prompt):
@@ -1093,10 +1229,14 @@ def observe(prompt):
     print(f'[VIEW {index}] {prompt}: SAM3 {score:.2f}, mask rows {v.min()}-{v.max()} '
           f'cols {u.min()}-{u.max()}, depth on {coverage:.0%} of mask, '
           f'median range {median_range:.2f} m', flush=True)
+    if coverage < MIN_DEPTH_COVERAGE:
+        # What depth there is under such a mask is the background seen past the
+        # object, not the object: it is closer than the camera can measure.
+        raise DepthTooSparse(f"depth on only {coverage:.0%} of the {prompt}'s mask; "
+                             "it is closer than the depth camera can measure")
     points = pointcloud.deproject(depth, k, pointcloud.object_depth_mask(depth, mask))
     if len(points) < 100:
-        # The head camera returns little below about 0.5 m: on 2026-09-19 masks at
-        # 0.53 m and beyond had depth on 78-97% of their pixels, at 0.45-0.48 m on 0-29%.
+        # The head camera returns little below about 0.5 m (MIN_DEPTH_COVERAGE).
         near = (f"; at {median_range:.2f} m it is closer than the depth camera can measure, "
                 f"back the robot off" if median_range < .5 else "")
         raise DepthTooSparse(f"only {len(points)} depth points on the {prompt}{near}")
@@ -1108,6 +1248,7 @@ def observe(prompt):
     return dict(points=world_points, support=support_height, view=index,
                 camera=odom_from_camera[:3, 3], score=score, area=area,
                 clipped=clipped, occlusion=foreground_occlusion(depth,mask,support),
+                coverage=coverage, median_range=median_range,
                 feature=odom_from_camera[:3, :3] @ image_point + odom_from_camera[:3, 3])
 
 
@@ -1134,7 +1275,24 @@ def merge_target_views(views):
 
 
 def observe_geometry(node, prompt, poses=None):
-    initial = observe(prompt)
+    try:
+        initial = observe(prompt)
+    except sam3_client.ObjectNotFound:
+        # Look down in steps before giving up: what the operator put in front of
+        # the robot is below a level head more often than anywhere else.
+        joints = joint_positions(node)
+        for angle in SEARCH_TILTS:
+            if angle >= joints['head_tilt_joint'] - .05:
+                continue
+            print(f"[GEOMETRY] nothing at tilt {joints['head_tilt_joint']:.2f}; looking down to {angle:.2f}", flush=True)
+            aim_head(node, joints['head_pan_joint'], angle)
+            try:
+                initial = observe(prompt)
+                break
+            except sam3_client.ObjectNotFound:
+                continue
+        else:
+            raise
     if initial['clipped']:
         # A level/reset head may see only the top of a tabletop object. Centre
         # that detection before choosing scan angles, then acquire fresh depth.
@@ -1808,6 +1966,13 @@ def pick(prompt, mode='auto', cloud=None):
             raise RuntimeError(f'Palm did not reach the calibrated grasp pose '
                                f'({distances[index]*1000:.1f} mm, {angles[index]:.3f} rad); refusing closure')
         print(f"[GRASP] reached candidate {index}, contact width {widths[index]*1000:.1f} mm", flush=True)
+        if diagnostics:
+            # The head still looks at the target and the hand is in view: where the
+            # pads sit against the object, for the next time the fingers miss it.
+            try:
+                cv2.imwrite(str(Path(diagnostics)/'reached.jpg'), grab_rgbd(timeout=10.)[0])
+            except (RuntimeError, ValueError) as error:
+                print(f'[GRASP] no frame of the reached pose: {error}', flush=True)
         # Close until both finger springs show contact, then rule out an empty grasp.
         width = float(widths[index])
         # The firmer 0.14 is for simulation, where this position hold is the whole grip.

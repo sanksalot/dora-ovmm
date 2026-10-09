@@ -3,7 +3,7 @@ Panels:
     Name: Displays
     Property Tree Widget:
       Expanded:
-        - /Occupied cells1
+        - /Next best view1
       Splitter Ratio: 0.5
   - Class: rviz_common/Views
     Name: Views
@@ -13,10 +13,10 @@ Visualization Manager:
     - Class: rviz_default_plugins/Grid
       Name: Grid
       Enabled: true
-      Cell Size: 0.5
-      Plane Cell Count: 10
-      Color: 160; 160; 164
-      Alpha: 0.5
+      Cell Size: 1
+      Plane Cell Count: 20
+      Color: 200; 200; 200
+      Alpha: 0.3
       Reference Frame: <Fixed Frame>
     - Class: rviz_default_plugins/TF
       Name: TF
@@ -24,17 +24,55 @@ Visualization Manager:
       Marker Scale: 0.3
       Show Axes: true
       Show Names: true
-    - Class: rviz_default_plugins/PointCloud2
-      Name: Occupied cells
+    - Class: rviz_default_plugins/RobotModel
+      Name: RobotModel
+      Enabled: true
+      Description Topic:
+        Value: /robot_description
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+      Alpha: 0.6
+    - Class: rviz_default_plugins/Map
+      Name: Map
       Enabled: true
       Topic:
-        Value: /nbv/occupied
+        Value: /map
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+      Color Scheme: map
+      Alpha: 0.25
+    - Class: rviz_default_plugins/Path
+      Name: Nav2 plan
+      Enabled: true
+      Topic:
+        Value: /plan
         Depth: 1
         Durability Policy: Volatile
         Reliability Policy: Reliable
-      Style: Boxes
-      Size (m): 0.05
+      Color: 210; 35; 30
+      Line Style: Billboards
+      Line Width: 0.03
       Alpha: 1
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Next best view
+      Enabled: true
+      Topic:
+        Value: /nbv/markers
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+    - Class: rviz_default_plugins/PointCloud2
+      Name: TSDF voxels
+      Enabled: true
+      Topic:
+        Value: /nbv/tsdf
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+      Style: Boxes
+      Size (m): 0.0075
+      Alpha: 0.85
       Decay Time: 0
       Position Transformer: XYZ
       Color Transformer: Intensity
@@ -44,52 +82,55 @@ Visualization Manager:
       Autocompute Intensity Bounds: false
       Min Intensity: 0.5
       Max Intensity: 1
-      Selectable: true
-    - Class: octomap_rviz_plugins/OccupancyMap
-      Name: OctoMap
-      Enabled: true
+      Selectable: false
+    - Class: rviz_default_plugins/PointCloud2
+      Name: TSDF surface
+      Enabled: false
       Topic:
-        Value: /nbv/octomap
+        Value: /nbv/surface
         Depth: 1
-        Durability Policy: Volatile
-        Reliability Policy: Reliable
-    - Class: rviz_default_plugins/Marker
-      Name: Target sphere
-      Enabled: true
-      Topic:
-        Value: /nbv/sphere
-        Depth: 1
-        Durability Policy: Volatile
-        Reliability Policy: Reliable
-    - Class: rviz_default_plugins/RobotModel
-      Name: RobotModel
-      Enabled: true
-      Description Topic:
-        Value: /robot_description
         Durability Policy: Transient Local
         Reliability Policy: Reliable
-      Alpha: 0.4
+      Style: Points
+      Size (Pixels): 3
+      Alpha: 1
+      Decay Time: 0
+      Color Transformer: FlatColor
+      Color: 90; 200; 120
+      Selectable: false
   Global Options:
-    Background Color: 48; 48; 48
-    Fixed Frame: base_footprint
+    Background Color: 255; 255; 255
+    Fixed Frame: map
     Frame Rate: 30
   Tools:
     - Class: rviz_default_plugins/MoveCamera
     - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
   Value: true
   Views:
     Current:
-      Class: rviz_default_plugins/Orbit
-      Name: Current View
-      Distance: 2.5
+      Class: rviz_default_plugins/ThirdPersonFollower
+      Name: Follow the robot
+      Distance: 3.2
       Focal Point:
-        X: 0.5
+        X: 0
         Y: 0
-        Z: 1.1
-      Pitch: 0.35
-      Yaw: 3.0
-      Target Frame: <Fixed Frame>
-    Saved: ~
+        Z: 0.4
+      Pitch: 0.45
+      Yaw: 3.1
+      Target Frame: base_footprint
+      Near Clip Distance: 0.01
+    Saved:
+      - Class: rviz_default_plugins/Orbit
+        Name: Whole room
+        Distance: 6.0
+        Focal Point:
+          X: -3.8
+          Y: -4.1
+          Z: 0.5
+        Pitch: 0.7
+        Yaw: 2.4
+        Target Frame: <Fixed Frame>
 Window Geometry:
   Displays:
     collapsed: false

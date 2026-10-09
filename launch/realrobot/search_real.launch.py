@@ -14,9 +14,10 @@ Each part of the mission is a switch, so one part can be tested alone:
     furniture:=29                       search that one piece only: no remembered
                                         places, no DeepSeek
 
-RViz, either or both: use_rviz:=true is MoveIt's (planning scene, RX camera),
+RViz, any of the three: use_rviz:=true is MoveIt's (planning scene, RX camera),
 opened by move_group; use_nav_rviz:=true is Nav2's (map, scan, costmaps, plans,
-2D Pose Estimate and Nav2 Goal), and only with nav.
+2D Pose Estimate and Nav2 Goal), and only with nav; nbv_rviz:=true is the
+Explore step's (TSDF, candidate views, grasp), as in simulation.
 
 Without target:= the stack comes up and no mission runs. With it, Ready blocks on
 "fresh map-to-base localization" until AMCL is seeded, which stays a step by hand
@@ -123,6 +124,12 @@ def generate_launch_description():
             description="Nav2's RViz (hsr_navigation2.rviz); ignored with nav:=false.",
         ),
         DeclareLaunchArgument(
+            "nav_rviz_config",
+            default_value=NAV_RVIZ,
+            description="RViz config for use_nav_rviz; config/rviz/nav_demo.rviz is the "
+                        "white-background one for filming.",
+        ),
+        DeclareLaunchArgument(
             "image_prefix",
             default_value="/remote",
             description="Prefix of RX's RGB and depth output topics.",
@@ -147,6 +154,13 @@ def generate_launch_description():
             default_value="false",
             choices=["true", "false"],
             description="target is a request ('bring me something to drink'); DeepSeek names the object.",
+        ),
+        DeclareLaunchArgument(
+            "nbv_rviz",
+            default_value="false",
+            choices=["true", "false"],
+            description="RViz with config/rviz/nbv.rviz: the Explore step's TSDF, views and grasp "
+                        "as markers, as search.launch.py shows in simulation.",
         ),
         DeclareLaunchArgument(
             "shutdown_when_done",
@@ -200,7 +214,7 @@ def generate_launch_description():
     # Without nav there is no map frame for this config to show.
     processes.append(
         ExecuteProcess(
-            cmd=["rviz2", "-d", NAV_RVIZ],
+            cmd=["rviz2", "-d", Arg("nav_rviz_config")],
             name="nav_rviz",
             output="log",
             condition=IfCondition(
@@ -208,6 +222,16 @@ def generate_launch_description():
                     ["'", Arg("use_nav_rviz"), "' == 'true' and '", Arg("nav"), "' == 'true'"]
                 )
             ),
+        )
+    )
+    # The robot's clock is the wall clock, so unlike the simulator's copy this
+    # needs no use_sim_time for RViz to see current transforms.
+    processes.append(
+        ExecuteProcess(
+            cmd=["rviz2", "-d", str(ROOT / "config/rviz/nbv.rviz")],
+            name="nbv_rviz",
+            output="log",
+            condition=IfCondition(Arg("nbv_rviz")),
         )
     )
     # No settle time: Ready waits on every service the chosen steps use.
@@ -241,6 +265,8 @@ def generate_launch_description():
             Arg("active_perception"),
             "--rerun",
             Arg("rerun"),
+            "--rviz",
+            Arg("nbv_rviz"),
             "--natural-language",
             Arg("natural_language"),
         ],

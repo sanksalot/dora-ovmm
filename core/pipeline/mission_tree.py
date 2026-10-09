@@ -36,6 +36,7 @@ import time
 import traceback
 from pathlib import Path
 
+import numpy as np
 import py_trees
 import py_trees_ros
 import rclpy
@@ -83,6 +84,30 @@ class Step(py_trees.behaviour.Behaviour):
         if self.action():
             return py_trees.common.Status.SUCCESS
         return py_trees.common.Status.FAILURE
+
+
+def nbv_pregrasps(chosen):
+    """The pregrasp of the grasp Explore found, as (1, 4, 4) in map, or None.
+
+    Explore's `ik_reachable` proves a grasp reachable from *some* base pose: it
+    calls base_placement.solve, which asks the IK service for base placements,
+    never for the pose the camera stood at. Run 20260924-014619 kept the explore
+    pose on the 1.0 m view ring and the pick found every pregrasp 0.98 m from a
+    base it may move 0.25 m: GOAL_STATE_INVALID on all of them.
+
+    So park solves the base for this pregrasp instead. It is the pose the pick's
+    seeded IK plans (pick.APPROACH back along the palm), and the IK service
+    returns bases on the side the grasp approaches from, so the graph's probe
+    bearings that drove through the cereal boxes in run 20260924-012335 are
+    not consulted.
+    """
+    grasp = chosen.get("nbv_grasp")
+    if not grasp:
+        return None
+    from core.grasping.pick import APPROACH
+    back_off = np.eye(4)
+    back_off[2, 3] = -APPROACH
+    return (np.asarray(grasp["palm_pose"], dtype=float) @ back_off)[None]
 
 
 def build(steps, grasp=True, navigate_only=False, active_perception=False, nav=True):
@@ -133,7 +158,7 @@ def exit_code(root):
 
 
 def mission_steps(navigator, scene, target, graph_path, top_k, bearings, timeout, perception, mode="auto",
-                  rerun=False, nav=True, furniture=None):
+                  rerun=False, rviz=False, nav=True, furniture=None):
     """The existing pipeline functions, as the tree's actions."""
     # Share the selected location and detected object between mission steps.
     chosen = {}
@@ -198,16 +223,29 @@ def mission_steps(navigator, scene, target, graph_path, top_k, bearings, timeout
 
     def explore():
         from core.active_perception.explore import explore as nbv_explore, furniture_footprints
-        log = nbv_explore(navigator, target, rerun=rerun, blockers=furniture_footprints(scene),
-                          sim=not REAL_ROBOT)
+        # Park drives to the grasp's IK base next, so no drive back to the view.
+        log = nbv_explore(navigator, target, rerun=rerun, rviz=rviz,
+                          blockers=furniture_footprints(scene), sim=not REAL_ROBOT,
+                          return_to_grasp_view=False)
         # The pick plans on this fused surface instead of scanning again.
         chosen["cloud"] = log["target_cloud"]
+        # Park solves the base for this grasp's pregrasp; see nbv_pregrasps.
+        chosen["nbv_grasp"] = log["best_grasp"]
         print(f"[NBV] {log['views_fused']} views fused, best grasp {log['best_grasp'] and round(log['best_grasp']['quality'], 3)}", flush=True)
         return log["views_fused"] > 0
 
     def park():
+        hand_poses = nbv_pregrasps(chosen)
+        if hand_poses is not None:
+            print("[PARK] parking for the grasp active perception found", flush=True)
         status = actions.make_graspable(scene, chosen["object"], navigator, bearings=bearings,
-                                        target=target)
+                                        target=target, hand_poses=hand_poses)
+        if status != actions.READY and hand_poses is not None:
+            # The pick generates its own grasps on the fused cloud, so a base the
+            # graph's probes certify still serves it.
+            print("[PARK] no clear base for that grasp; parking from the graph instead", flush=True)
+            status = actions.make_graspable(scene, chosen["object"], navigator, bearings=bearings,
+                                            target=target)
         return status == actions.READY
 
     def pause():
@@ -266,6 +304,8 @@ def run(argv=None):
                              "names the object, and only that reaches the detector and the graph")
     parser.add_argument("--rerun", default="false", choices=["true", "false"],
                         help="open the Rerun viewer and stream the Explore step live; it is always saved as explore.rrd")
+    parser.add_argument("--rviz", default="false", choices=["true", "false"],
+                        help="publish the Explore step as markers for config/rviz/nbv.rviz")
     parser.add_argument("--render", action="store_true", help="save a picture of the tree and exit")
     args = parser.parse_args(argv)
     grasp, navigate_only = args.grasp == "true", args.navigate_only == "true"
@@ -304,7 +344,8 @@ def run(argv=None):
     navigator = Navigator(use_sim_time=not REAL_ROBOT)
     steps = mission_steps(navigator, scene, args.target, args.graph, args.top_k,
                           args.bearings, args.startup_timeout, perception=not navigate_only, mode=args.mode,
-                          rerun=args.rerun == "true", nav=nav, furniture=args.furniture or None)
+                          rerun=args.rerun == "true", rviz=args.rviz == "true",
+                          nav=nav, furniture=args.furniture or None)
     tree = py_trees_ros.trees.BehaviourTree(build(steps, grasp=grasp, navigate_only=navigate_only,
                                                   active_perception=active_perception, nav=nav))
     viewers = SingleThreadedExecutor()

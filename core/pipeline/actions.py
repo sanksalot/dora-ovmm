@@ -225,12 +225,15 @@ def get_ready(navigator, target, timeout, perception=True, nav=True):
     if perception:
         print('[WAIT] SAM3 response (start docker/sam3/run_sam3.sh on host)', flush=True)
         while True:
+            # Take the budget outside the try: the deadline's TimeoutError must end
+            # the wait, the RPC's ("no reply within 30s") must retry it.
+            budget = min(30., remaining())
             try:
-                sam3_client.detect(rgb, target, timeout=min(30., remaining()))
+                sam3_client.detect(rgb, target, timeout=budget)
                 break
             except sam3_client.ObjectNotFound:
                 break  # A valid negative detection still proves the server is ready.
-            except RuntimeError as error:
+            except (RuntimeError, TimeoutError) as error:
                 print(f'[WAIT] SAM3: {error}', flush=True)
                 rclpy.spin_once(navigator, timeout_sec=min(1., remaining()))
         print('[READY] SAM3; startup detection discarded', flush=True)
@@ -424,8 +427,12 @@ def locate(obj, with_camera=False):
     return (points, transform[:3, 3]) if with_camera else points
 
 
-def make_graspable(scene, node_id, navigator, obstacles="--costmap", bearings=12, target=None):
-    """Park at a reachable base pose, using measured pregrasp geometry when available."""
+def make_graspable(scene, node_id, navigator, obstacles="--costmap", bearings=12, target=None,
+                   hand_poses=None):
+    """Park at a reachable base pose, using measured pregrasp geometry when available.
+
+    `hand_poses` are map-frame pregrasp palm poses the caller already has, such
+    as the grasp active perception found; the base is then solved for those."""
     centre, dimensions = box(scene.nodes[node_id])
     holder, relation = sg.location_of(scene, node_id)
     # The target is excluded: its own box is wider than graspable.PARK_DISTANCE
@@ -436,9 +443,8 @@ def make_graspable(scene, node_id, navigator, obstacles="--costmap", bearings=12
         # Graph boxes are solid: the piece the object is on or in would swallow the hand.
         if furniture_id != holder or relation == "near":
             solid.append(sg.footprint(data))
-    hand_poses = None
     alternate_hand_poses = None
-    if target:
+    if hand_poses is None and target:
         from core.grasping.pick import top_rectangle, cylinder, sphere, contact_candidates
         measured = locate(target, with_camera=True)
         if measured is not None:

@@ -23,6 +23,11 @@ TORSO_LIFT = 0.345
 TILT_MIN, TILT_MAX = (-1.57, 0.52)
 # The camera stands over the base centre, near enough for footprint clearance.
 CLEARANCE = ROBOT_RADIUS + 0.05
+# An eye refused by Nav2 rules out its neighbours too: retarget() moves every eye
+# with the box centre, and on 2026-09-24 03:24 a 1 cm shift offered the refused
+# (0.42, 2.82) straight back as (0.427, 2.799). Half Nav2's 0.3 m goal tolerance:
+# anything closer than that is the same goal to the planner. Own number.
+REJECTED_RADIUS = 0.15
 
 
 def spherical_to_cartesian(r, theta, phi):
@@ -98,7 +103,7 @@ class ViewHalfSphere:
             and TILT_MIN <= tilt <= TILT_MAX
             and bool(clear)
             and not blocks(eye[:2], self.blockers)
-            and not any(np.linalg.norm(eye - e) < 0.01 for e in self.rejected)
+            and not any(np.linalg.norm(eye - e) < REJECTED_RADIUS for e in self.rejected)
             and (self.grid is None or free(self.grid, eye[:2]))
         )
 

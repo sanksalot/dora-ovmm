@@ -322,13 +322,18 @@ def main():
     """Print the search order for one object, without ROS. The graph is not saved."""
     parser = argparse.ArgumentParser(description=main.__doc__)
     parser.add_argument("object")
-    parser.add_argument("--graph", required=True)
+    parser.add_argument("--graph", default=None,
+                        help="scene graph to reason over; default: the $RECORDING's, as on the robot")
     parser.add_argument("--top-k", type=int, default=3, help="furniture guesses to ask DeepSeek for")
     parser.add_argument("--near", type=float, nargs=2, metavar=("X", "Y"), help="robot position")
     parser.add_argument("--natural-language", default="false", choices=["true", "false"],
                         help="object is a request such as 'bring me something to drink', as in mission_tree")
     args = parser.parse_args()
     # Load the saved graph and print the search order without moving the robot.
+    if args.graph is None:
+        from core.utils.recording import Paths
+        args.graph = Paths().graph
+        print(f"[GRAPH] {args.graph}")
     scene = sg.load(args.graph)
     if args.natural_language == "true":
         known = {data["name"] or data["label"] for data in sg.objects(scene).values()}

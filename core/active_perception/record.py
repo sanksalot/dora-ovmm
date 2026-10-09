@@ -26,6 +26,27 @@ def _ramp(values, colors=GAIN_COLORS):
     return np.where(values[:, None] < 0.5, first, second).astype(np.uint8)
 
 
+def view_rings(sphere, steps=97):
+    """The circles the candidate cameras actually stand on.
+
+    ViewHalfSphere samples a radius `r` at the polar angles where that sphere
+    meets the robot's two camera heights, so a camera sits on a horizontal
+    circle of radius `r*sin(theta)` at height `center_z + r*cos(theta)` -- not
+    on a circle of radius `r` at the target's height. Drawing the latter put
+    every ring 50 cm below and 21 cm outside the views it was meant to frame,
+    which is what made the frusta look unmoored from the sphere.
+    """
+    around = np.linspace(0, 2 * np.pi, steps)
+    rings = []
+    for r in sphere.radii:
+        for theta in sphere.thetas(r):
+            radius, height = (r * np.sin(theta), sphere.center[2] + r * np.cos(theta))
+            rings.append(np.column_stack([sphere.center[0] + radius * np.cos(around),
+                                          sphere.center[1] + radius * np.sin(around),
+                                          np.full_like(around, height)]))
+    return rings
+
+
 def _camera(log, path, view, intrinsic, shape, plane=0.25):
     """A real camera: its pose and pinhole, so images hang in the 3D view."""
     log(path, rr.Transform3D(translation=view[:3, 3], mat3x3=view[:3, :3]))
@@ -72,8 +93,10 @@ class Recording:
         blueprint = rrb.Blueprint(
             rrb.Horizontal(
                 rrb.Spatial3DView(origin="world", name="Active perception",
+                                  # The rings and rejected positions crowd the scene; they
+                                  # stay in the recording, one click away in the blueprint panel.
                                   contents=["+ $origin/**", "- world/camera/image", "- world/camera/depth",
-                                            "- world/views/unreachable"]),
+                                            "- world/views/unreachable", "- world/views/sphere"]),
                 rrb.Vertical(
                     rrb.Spatial2DView(origin="world/camera", name="Head camera", contents=["+ world/camera/image"]),
                     rrb.TimeSeriesView(origin="plots", name="Information gain and grasp quality"),
@@ -96,9 +119,12 @@ class Recording:
         # Draw the fixed fusion cube and the candidate viewing spheres once.
         self.log("world/tsdf/cube", rr.Boxes3D(centers=[origin + length / 2], half_sizes=[[length / 2] * 3],
                                              colors=[30, 30, 30], fill_mode="majorwireframe", labels=["TSDF cube"]), static=True)
-        self.log("world/views/sphere", rr.Ellipsoids3D(centers=[sphere.center] * len(sphere.radii),
-                                                     half_sizes=[[r] * 3 for r in sphere.radii],
-                                                     colors=[160, 160, 160], fill_mode="majorwireframe"), static=True)
+        # One ring per camera circle, not a wireframe ball per radius: the nested
+        # spheres hid the views they were meant to frame. The RViz backend draws
+        # the same rings, so the two viewers agree.
+        self.log("world/views/sphere", rr.LineStrips3D(view_rings(sphere),
+                                                       colors=[170, 170, 170],
+                                                       radii=0.004), static=True)
         # Show rejected camera positions separately from usable candidates.
         unreachable = [view for view in sphere.all_views() if not sphere.feasible(view)]
         if unreachable:
